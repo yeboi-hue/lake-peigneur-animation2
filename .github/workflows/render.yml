@@ -38,6 +38,7 @@ jobs:
       total_frames: ${{ steps.timing.outputs.total_frames }}
       chunk_count: ${{ steps.matrix.outputs.chunk_count }}
       chunk_matrix: ${{ steps.matrix.outputs.chunk_matrix }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -62,9 +63,10 @@ jobs:
             mkdir -p "$PROJECT_DIR"
             unzip -q "$PROJECT_ZIP_OPTIMIZED" -d "$PROJECT_DIR"
           else
-            echo "No project found. Upload the extracted project or place LakePeigneur-Short-COMPLETE.zip / LakePeigneur-Short.zip in the repository root."
+            echo "No project found."
             exit 1
           fi
+
           test -f "$PROJECT_DIR/package.json"
           test -f "$PROJECT_DIR/scripts/make_audio.py"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -95,10 +97,12 @@ jobs:
         id: timing
         run: |
           TOTAL_FRAMES="$(python -c 'import json; print(int(json.load(open("'"$PROJECT_DIR"'/public/timing.json"))["total"]))')"
+
           if [ "$TOTAL_FRAMES" -le 0 ]; then
             echo "Invalid frame count: $TOTAL_FRAMES"
             exit 1
           fi
+
           echo "total_frames=$TOTAL_FRAMES" >> "$GITHUB_OUTPUT"
           echo "Prepared $TOTAL_FRAMES frames at 30 FPS."
 
@@ -111,7 +115,9 @@ jobs:
             12|16|20) ;;
             *) echo "Chunk count must be 12, 16, or 20."; exit 1 ;;
           esac
+
           MATRIX="$(python -c 'import json, os; print(json.dumps(list(range(int(os.environ["REQUESTED_CHUNKS"])))) )')"
+
           echo "chunk_count=$REQUESTED_CHUNKS" >> "$GITHUB_OUTPUT"
           echo "chunk_matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
@@ -130,11 +136,13 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
         chunk: ${{ fromJSON(needs.prepare.outputs.chunk_matrix) }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -143,6 +151,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -f package.json ]; then
             PROJECT_DIR="."
           elif [ -f "$PROJECT_ZIP_COMPLETE" ]; then
@@ -161,6 +170,7 @@ jobs:
             echo "Project files or project ZIP not found."
             exit 1
           fi
+
           test -f "$PROJECT_DIR/package.json"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -220,16 +230,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           START_FRAME=$(( CHUNK_INDEX * TOTAL_FRAMES / CHUNK_COUNT ))
           END_FRAME=$(( (CHUNK_INDEX + 1) * TOTAL_FRAMES / CHUNK_COUNT - 1 ))
+
           if [ "$START_FRAME" -gt "$END_FRAME" ]; then
             echo "Invalid empty chunk: $CHUNK_INDEX"
             exit 1
           fi
+
           printf -v CHUNK_NAME "chunk-%02d.mp4" "$CHUNK_INDEX"
           mkdir -p "$PROJECT_DIR/out/chunks"
+
           echo "Rendering chunk $CHUNK_INDEX: frames $START_FRAME-$END_FRAME"
+
           cd "$PROJECT_DIR"
+
           npx remotion render src/index.ts LakePeigneurShort "out/chunks/$CHUNK_NAME" \
             --frames="$START_FRAME-$END_FRAME" \
             --muted \
@@ -258,6 +274,7 @@ jobs:
     needs: [prepare, render-chunks]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -266,6 +283,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -f package.json ]; then
             PROJECT_DIR="."
           elif [ -f "$PROJECT_ZIP_COMPLETE" ]; then
@@ -284,6 +302,7 @@ jobs:
             echo "Project files or project ZIP not found."
             exit 1
           fi
+
           test -f "$PROJECT_DIR/package.json"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -318,15 +337,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$PROJECT_DIR/out"
           : > "$PROJECT_DIR/out/chunks.txt"
+
           EXPECTED_CHUNKS="${{ needs.prepare.outputs.chunk_count }}"
           FOUND_CHUNKS=0
+
           for FILE in chunks/chunk-*.mp4; do
             [ -f "$FILE" ] || continue
             printf "file '%s/%s'\n" "$PWD" "$FILE" >> "$PROJECT_DIR/out/chunks.txt"
             FOUND_CHUNKS=$((FOUND_CHUNKS + 1))
           done
+
           if [ "$FOUND_CHUNKS" -ne "$EXPECTED_CHUNKS" ]; then
             echo "Expected $EXPECTED_CHUNKS chunks but found $FOUND_CHUNKS."
             exit 1
@@ -336,6 +359,7 @@ jobs:
             -map 0:v:0 -c:v copy -an "$PROJECT_DIR/out/video-only.mp4"
 
           DURATION="$(python -c 'import os; print(int(os.environ["TOTAL_FRAMES"]) / int(os.environ["FRAME_RATE"]))')"
+
           ffmpeg -y -v error -i "$PROJECT_DIR/out/video-only.mp4" \
             -i "$PROJECT_DIR/public/narration.wav" \
             -map 0:v:0 -map 1:a:0 \
@@ -346,24 +370,42 @@ jobs:
       - name: Verify final frame count, dimensions, frame rate and audio
         env:
           EXPECTED_FRAMES: ${{ needs.prepare.outputs.total_frames }}
+        shell: bash
         run: |
           set -euo pipefail
+
           VIDEO="$PROJECT_DIR/out/lake-peigneur.mp4"
+
+          # Extract only the frame-count value.
+          # Avoid CSV output because FFprobe may append a trailing comma.
           ACTUAL_FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 \
-            -show_entries stream=nb_read_frames -of csv=p=0 "$VIDEO" | head -n 1)"
+            -show_entries stream=nb_read_frames \
+            -of default=noprint_wrappers=1:nokey=1 "$VIDEO" | tr -d '[:space:],')"
+
+          # Validate that the result contains only digits.
+          if ! [[ "$ACTUAL_FRAMES" =~ ^[0-9]+$ ]]; then
+            echo "Invalid FFprobe frame-count output: '$ACTUAL_FRAMES'"
+            exit 1
+          fi
+
           if [ "$ACTUAL_FRAMES" != "$EXPECTED_FRAMES" ]; then
             echo "Frame-count mismatch: expected $EXPECTED_FRAMES, got $ACTUAL_FRAMES."
             exit 1
           fi
+
           ffprobe -v error -show_entries stream=codec_name,codec_type,width,height,r_frame_rate,duration \
             -of default=nw=1 "$VIDEO"
+
           AUDIO_STREAMS="$(ffprobe -v error -select_streams a -show_entries stream=index \
             -of csv=p=0 "$VIDEO" | wc -l)"
+
           if [ "$AUDIO_STREAMS" -ne 1 ]; then
             echo "Expected exactly one audio stream, found $AUDIO_STREAMS."
             exit 1
           fi
+
           echo "Verified $ACTUAL_FRAMES frames and exactly one audio stream."
+
           mkdir -p final-output
           cp "$VIDEO" final-output/lake-peigneur.mp4
 
@@ -373,4 +415,3 @@ jobs:
           name: lake-peigneur-mp4
           path: final-output/lake-peigneur.mp4
           retention-days: 30
-          
