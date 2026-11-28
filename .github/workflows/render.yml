@@ -46,6 +46,7 @@ jobs:
       total_frames: ${{ steps.timing.outputs.total_frames }}
       chunk_count: ${{ steps.matrix.outputs.chunk_count }}
       chunk_matrix: ${{ steps.matrix.outputs.chunk_matrix }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -107,6 +108,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           TOTAL_FRAMES="$(python -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["total"]))' "$PROJECT_DIR/public/timing.json")"
 
           if ! [[ "$TOTAL_FRAMES" =~ ^[0-9]+$ ]] || [ "$TOTAL_FRAMES" -le 0 ]; then
@@ -130,7 +132,8 @@ jobs:
             *) echo "Chunk count must be 12, 16, or 20."; exit 1 ;;
           esac
 
-          MATRIX="$(python -c 'import json,os; print(json.dumps(list(range(int(os.environ["REQUESTED_CHUNKS"])))))')"
+          MATRIX="$(python -c 'import json,os; print(json.dumps(list(range(int(os.environ["REQUESTED_CHUNKS"])))) )')"
+
           echo "chunk_count=$REQUESTED_CHUNKS" >> "$GITHUB_OUTPUT"
           echo "chunk_matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
@@ -150,11 +153,13 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
         chunk: ${{ fromJSON(needs.prepare.outputs.chunk_matrix) }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -286,6 +291,7 @@ jobs:
     needs: [prepare, render-chunks]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -386,15 +392,19 @@ jobs:
           set -euo pipefail
           VIDEO="$PROJECT_DIR/out/lake-peigneur.mp4"
 
-          ACTUAL_FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 \
+          RAW_FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 \
             -show_entries stream=nb_read_frames \
-            -of default=noprint_wrappers=1:nokey=1 "$VIDEO" | head -n 1 | tr -d '\r' | xargs)"
+            -of csv=p=0 "$VIDEO")"
+
+          echo "Raw FFprobe frame-count output: [$RAW_FRAMES]"
+
+          ACTUAL_FRAMES="$(printf '%s' "$RAW_FRAMES" | tr -cd '0-9')"
 
           echo "Expected frames: [$EXPECTED_FRAMES]"
           echo "Actual frames: [$ACTUAL_FRAMES]"
 
           if ! [[ "$ACTUAL_FRAMES" =~ ^[0-9]+$ ]]; then
-            echo "Invalid FFprobe frame count: [$ACTUAL_FRAMES]"
+            echo "Invalid FFprobe frame count: [$RAW_FRAMES]"
             exit 1
           fi
 
@@ -431,6 +441,7 @@ jobs:
     if: inputs.mode == 'assembly_only'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Validate previous Run ID
         shell: bash
@@ -438,6 +449,7 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           set -euo pipefail
+
           if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
             echo "Enter the numeric Run ID of the previous rendering run."
             exit 1
@@ -499,8 +511,10 @@ jobs:
       - name: Place existing audio and timing in project
         run: |
           set -euo pipefail
+
           test -s prepared-media/narration.wav
           test -s prepared-media/timing.json
+
           mkdir -p "$PROJECT_DIR/public"
           cp prepared-media/narration.wav "$PROJECT_DIR/public/narration.wav"
           cp prepared-media/timing.json "$PROJECT_DIR/public/timing.json"
@@ -510,6 +524,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           TOTAL_FRAMES="$(python -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["total"]))' "$PROJECT_DIR/public/timing.json")"
 
           if ! [[ "$TOTAL_FRAMES" =~ ^[0-9]+$ ]] || [ "$TOTAL_FRAMES" -le 0 ]; then
@@ -527,10 +542,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$PROJECT_DIR/out"
           : > "$PROJECT_DIR/out/chunks.txt"
 
           FOUND_CHUNKS=0
+
           for FILE in chunks/chunk-*.mp4; do
             [ -f "$FILE" ] || continue
             printf "file '%s/%s'\n" "$PWD" "$FILE" >> "$PROJECT_DIR/out/chunks.txt"
@@ -566,18 +583,20 @@ jobs:
           set -euo pipefail
           VIDEO="$PROJECT_DIR/out/lake-peigneur.mp4"
 
-          ACTUAL_FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 \
+          RAW_FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 \
             -show_entries stream=nb_read_frames \
-            -of default=noprint_wrappers=1:nokey=1 "$VIDEO" | head -n 1 | tr -d '\r' | xargs)"
+            -of csv=p=0 "$VIDEO")"
+
+          echo "Raw FFprobe frame-count output: [$RAW_FRAMES]"
+
+          ACTUAL_FRAMES="$(printf '%s' "$RAW_FRAMES" | tr -cd '0-9')"
 
           echo "Expected frames: [$EXPECTED_FRAMES]"
           echo "Actual frames: [$ACTUAL_FRAMES]"
 
           if ! [[ "$ACTUAL_FRAMES" =~ ^[0-9]+$ ]]; then
-            echo "Invalid FFprobe frame count: [$ACTUAL_FRAMES]"
+            echo "Invalid FFprobe frame count: [$RAW_FRAMES]"
             exit 1
           fi
 
-          if [ "$ACTUAL_FRAMES" -ne "$EXPECTED_FRAMES" ]; then
-            echo "Frame-count mismatch: expected $EXPECTED_FRAMES, got $ACTUAL_FRAMES."
-            e
+          if
